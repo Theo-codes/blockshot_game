@@ -1,23 +1,33 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { fetchLeaderboard, LeaderboardEntry } from '../lib/supabase';
 
 interface LeaderboardScreenProps {
   playerName: string;
+  submitting?: boolean;
   onClose: () => void;
 }
 
-export default function LeaderboardScreen({ playerName, onClose }: LeaderboardScreenProps) {
+export default function LeaderboardScreen({ playerName, submitting, onClose }: LeaderboardScreenProps) {
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
-  useEffect(() => {
+  const load = useCallback(() => {
+    setLoading(true);
+    setError(false);
     fetchLeaderboard()
       .then(data => { setEntries(data); setLoading(false); })
       .catch(() => { setError(true); setLoading(false); });
   }, []);
+
+  useEffect(() => {
+    // wait for score to finish saving before fetching
+    const delay = submitting ? 2000 : 300;
+    const t = setTimeout(load, delay);
+    return () => clearTimeout(t);
+  }, [load, submitting]);
 
   const playerRank = entries.findIndex(e => e.name.toLowerCase() === playerName.toLowerCase());
 
@@ -30,12 +40,21 @@ export default function LeaderboardScreen({ playerName, onClose }: LeaderboardSc
             <h2 className="text-lg font-bold text-white tracking-[0.2em] font-mono">LEADERBOARD</h2>
             <p className="text-xs text-gray-500 font-mono tracking-widest">GLOBAL TOP 20</p>
           </div>
-          <button
-            onClick={onClose}
-            className="text-gray-500 hover:text-white font-mono text-sm tracking-widest transition-colors border border-gray-700 hover:border-gray-500 px-3 py-1"
-          >
-            CLOSE
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={load}
+              title="Refresh"
+              className="text-gray-500 hover:text-white font-mono text-xs tracking-widest transition-colors border border-gray-700 hover:border-gray-500 px-3 py-1"
+            >
+              ↻
+            </button>
+            <button
+              onClick={onClose}
+              className="text-gray-500 hover:text-white font-mono text-sm tracking-widest transition-colors border border-gray-700 hover:border-gray-500 px-3 py-1"
+            >
+              CLOSE
+            </button>
+          </div>
         </div>
 
         {/* Player rank banner */}
@@ -57,9 +76,12 @@ export default function LeaderboardScreen({ playerName, onClose }: LeaderboardSc
           )}
 
           {error && (
-            <p className="text-red-400 font-mono text-xs tracking-widest text-center py-8">
-              FAILED TO LOAD · CHECK CONNECTION
-            </p>
+            <div className="text-center py-8">
+              <p className="text-red-400 font-mono text-xs tracking-widest">FAILED TO LOAD</p>
+              <button onClick={load} className="mt-3 text-gray-500 hover:text-white font-mono text-xs tracking-widest border border-gray-700 px-4 py-1.5">
+                TRY AGAIN
+              </button>
+            </div>
           )}
 
           {!loading && !error && entries.length === 0 && (
@@ -74,11 +96,10 @@ export default function LeaderboardScreen({ playerName, onClose }: LeaderboardSc
             return (
               <div
                 key={entry.id ?? i}
-                className={`flex items-center gap-3 px-3 py-2.5 mb-1 border transition-colors ${
-                  isPlayer
-                    ? 'border-teal-700 bg-teal-950/30'
-                    : 'border-transparent hover:border-gray-800'
-                }`}
+                className={`flex items-center gap-3 px-3 py-2.5 mb-1 border transition-colors ${isPlayer
+                  ? 'border-teal-700 bg-teal-950/30'
+                  : 'border-transparent hover:border-gray-800'
+                  }`}
               >
                 <span className="font-mono text-xs w-6 text-center">
                   {i < 3 ? medals[i] : <span className="text-gray-600">#{i + 1}</span>}

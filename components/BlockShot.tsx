@@ -29,7 +29,11 @@ export default function BlockShot() {
   const [overlayState, setOverlayState] = useState<'idle' | 'playing' | 'over'>('idle');
   const [finalScore, setFinalScore] = useState(0);
   const [finalLevel, setFinalLevel] = useState(1);
-  const [submitting, setSubmitting] = useState(false);
+  const [submitStatus, setSubmitStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+
+  // store playerName in a ref so the game loop callback always sees latest value
+  const playerNameRef = useRef<string | null>(null);
+  useEffect(() => { playerNameRef.current = playerName; }, [playerName]);
 
   useEffect(() => {
     const saved = localStorage.getItem('bs_player_name');
@@ -37,17 +41,19 @@ export default function BlockShot() {
     else setShowNameEntry(true);
     const { music, sfx } = getSoundSettings();
     setMusicOn(music); setSfxOn(sfx); setSfxEnabled(sfx);
-    try { setHi(parseInt(localStorage.getItem('bs3_hi') || '0')); } catch {}
+    try { setHi(parseInt(localStorage.getItem('bs3_hi') || '0')); } catch { }
   }, []);
 
   const handleNameConfirm = (name: string) => {
     setPlayerName(name);
+    playerNameRef.current = name;
     localStorage.setItem('bs_player_name', name);
     setShowNameEntry(false);
   };
 
   const handleSettingsSave = (name: string, music: boolean, sfx: boolean) => {
     setPlayerName(name);
+    playerNameRef.current = name;
     localStorage.setItem('bs_player_name', name);
     setMusicOn(music); setSfxOn(sfx); setSfxEnabled(sfx);
   };
@@ -56,20 +62,24 @@ export default function BlockShot() {
     setRapid(r); setWide(w); setShield(sh); setHasBomb(bomb);
   }, []);
 
-  const handleGameOver = useCallback(async (s: number, lv: number) => {
-    setFinalScore(s); setFinalLevel(lv);
+  const handleGameOver = useCallback((s: number, lv: number) => {
+    setFinalScore(s);
+    setFinalLevel(lv);
     setOverlayState('over');
     setHi(h => {
       const newHi = Math.max(h, s);
-      try { localStorage.setItem('bs3_hi', String(newHi)); } catch {}
+      try { localStorage.setItem('bs3_hi', String(newHi)); } catch { }
       return newHi;
     });
-    if (playerName && s > 0) {
-      setSubmitting(true);
-      await submitScore(playerName, s, lv);
-      setSubmitting(false);
+
+    const name = playerNameRef.current;
+    if (name && s > 0) {
+      setSubmitStatus('saving');
+      submitScore(name, s, lv)
+        .then(() => setSubmitStatus('saved'))
+        .catch(() => setSubmitStatus('error'));
     }
-  }, [playerName]);
+  }, []);
 
   const handleStart = useCallback(() => setOverlayState('playing'), []);
 
@@ -81,14 +91,35 @@ export default function BlockShot() {
   const handleStartClick = () => {
     if (!playerName) { setShowNameEntry(true); return; }
     setOverlayState('playing');
+    setSubmitStatus('idle');
     startGame();
+  };
+
+  const handleOpenLeaderboard = () => {
+    // if still saving, wait until done then open
+    if (submitStatus === 'saving') {
+      const poll = setInterval(() => {
+        setSubmitStatus(s => {
+          if (s !== 'saving') {
+            clearInterval(poll);
+            setShowLeaderboard(true);
+          }
+          return s;
+        });
+      }, 200);
+    } else {
+      setShowLeaderboard(true);
+    }
   };
 
   return (
     <>
       {showNameEntry && <NameEntry onConfirm={handleNameConfirm} />}
       {showLeaderboard && playerName && (
-        <LeaderboardScreen playerName={playerName} onClose={() => setShowLeaderboard(false)} />
+        <LeaderboardScreen
+          playerName={playerName}
+          onClose={() => setShowLeaderboard(false)}
+        />
       )}
       {showSettings && playerName && (
         <SettingsScreen
@@ -115,15 +146,14 @@ export default function BlockShot() {
             <PowerSlot label="SHIELD" timer={shieldTimer} activeColor="text-blue-400 border-blue-400" />
             <button
               onClick={useBomb}
-              className={`px-3 py-1 border text-xs tracking-widest transition-colors ${
-                hasBomb ? 'border-red-500 text-red-400 hover:bg-red-500/20' : 'border-gray-700 text-gray-600'
-              }`}
+              className={`px-3 py-1 border text-xs tracking-widest transition-colors ${hasBomb ? 'border-red-500 text-red-400 hover:bg-red-500/20' : 'border-gray-700 text-gray-600'
+                }`}
             >
               BOMB {hasBomb ? '✓' : '✕'}
             </button>
           </div>
           <div className="flex gap-2">
-            <button onClick={() => setShowLeaderboard(true)} title="Leaderboard"
+            <button onClick={handleOpenLeaderboard} title="Leaderboard"
               className="px-3 py-1 border border-gray-700 text-gray-400 hover:border-gray-500 hover:text-white text-sm transition-colors">
               🏆
             </button>
@@ -151,8 +181,10 @@ export default function BlockShot() {
                 <>
                   <p className="text-xs text-gray-500 tracking-widest font-mono">LEVEL {finalLevel} REACHED</p>
                   <p className="text-lg text-yellow-400 tracking-widest font-mono">SCORE: {finalScore.toLocaleString()}</p>
-                  <p className="text-xs text-gray-500 font-mono tracking-widest">
-                    {submitting ? 'SAVING TO LEADERBOARD...' : `SCORE SAVED · ${(playerName ?? '').toUpperCase()}`}
+                  <p className="text-xs font-mono tracking-widest">
+                    {submitStatus === 'saving' && <span className="text-gray-500">SAVING TO LEADERBOARD...</span>}
+                    {submitStatus === 'saved' && <span className="text-teal-500">✓ SCORE SAVED · {(playerName ?? '').toUpperCase()}</span>}
+                    {submitStatus === 'error' && <span className="text-red-400">FAILED TO SAVE SCORE</span>}
                   </p>
                 </>
               )}
@@ -173,9 +205,15 @@ export default function BlockShot() {
                   {overlayState === 'over' ? 'RETRY' : 'START'}
                 </button>
                 {overlayState === 'over' && (
-                  <button onClick={() => setShowLeaderboard(true)}
-                    className="px-6 py-2.5 border-2 border-yellow-600 text-yellow-500 text-sm tracking-[0.2em] font-mono hover:bg-yellow-600 hover:text-black transition-colors">
-                    🏆 RANKS
+                  <button
+                    onClick={handleOpenLeaderboard}
+                    disabled={submitStatus === 'saving'}
+                    className={`px-6 py-2.5 border-2 text-sm tracking-[0.2em] font-mono transition-colors ${submitStatus === 'saving'
+                        ? 'border-gray-700 text-gray-600 cursor-wait'
+                        : 'border-yellow-600 text-yellow-500 hover:bg-yellow-600 hover:text-black'
+                      }`}
+                  >
+                    {submitStatus === 'saving' ? 'SAVING...' : '🏆 RANKS'}
                   </button>
                 )}
               </div>
@@ -197,9 +235,8 @@ export default function BlockShot() {
 function PowerSlot({ label, timer, activeColor }: { label: string; timer: number; activeColor: string }) {
   const active = timer > 0;
   return (
-    <div className={`px-3 py-1 border text-xs tracking-widest min-w-[80px] text-center transition-colors ${
-      active ? activeColor : 'border-gray-700 text-gray-600'
-    }`}>
+    <div className={`px-3 py-1 border text-xs tracking-widest min-w-[80px] text-center transition-colors ${active ? activeColor : 'border-gray-700 text-gray-600'
+      }`}>
       {label} {active ? `${Math.ceil(timer / 1000)}s` : 'OFF'}
     </div>
   );
