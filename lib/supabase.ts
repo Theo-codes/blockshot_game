@@ -1,9 +1,12 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// Initialize only if keys are present to avoid build-time crashes
+export const supabase = (supabaseUrl && supabaseAnonKey) 
+  ? createClient(supabaseUrl, supabaseAnonKey) 
+  : null;
 
 export interface LeaderboardEntry {
   id?: number;
@@ -14,6 +17,7 @@ export interface LeaderboardEntry {
 }
 
 export async function fetchLeaderboard(): Promise<LeaderboardEntry[]> {
+  if (!supabase) return [];
   const { data, error } = await supabase
     .from('leaderboard')
     .select('id, name, score, level, created_at')
@@ -24,6 +28,7 @@ export async function fetchLeaderboard(): Promise<LeaderboardEntry[]> {
 }
 
 export async function submitScore(name: string, score: number, level: number): Promise<void> {
+  if (!supabase) return;
   const { error } = await supabase
     .from('leaderboard')
     .insert({ name: name.trim().slice(0, 20), score, level });
