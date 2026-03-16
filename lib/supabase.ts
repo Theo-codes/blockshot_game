@@ -1,12 +1,9 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-// Initialize only if keys are present to avoid build-time crashes
-export const supabase = (supabaseUrl && supabaseAnonKey) 
-  ? createClient(supabaseUrl, supabaseAnonKey) 
-  : null;
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 export interface LeaderboardEntry {
   id?: number;
@@ -17,7 +14,6 @@ export interface LeaderboardEntry {
 }
 
 export async function fetchLeaderboard(): Promise<LeaderboardEntry[]> {
-  if (!supabase) return [];
   const { data, error } = await supabase
     .from('leaderboard')
     .select('id, name, score, level, created_at')
@@ -28,9 +24,29 @@ export async function fetchLeaderboard(): Promise<LeaderboardEntry[]> {
 }
 
 export async function submitScore(name: string, score: number, level: number): Promise<void> {
-  if (!supabase) return;
-  const { error } = await supabase
+  const trimmedName = name.trim().slice(0, 20);
+
+  // Check if player already has a score
+  const { data: existing } = await supabase
     .from('leaderboard')
-    .insert({ name: name.trim().slice(0, 20), score, level });
-  if (error) console.error('submitScore:', error);
+    .select('id, score')
+    .eq('name', trimmedName)
+    .single();
+
+  if (existing) {
+    // Only update if new score is higher
+    if (score > existing.score) {
+      const { error } = await supabase
+        .from('leaderboard')
+        .update({ score, level })
+        .eq('id', existing.id);
+      if (error) console.error('submitScore update:', error);
+    }
+  } else {
+    // First time playing — insert new row
+    const { error } = await supabase
+      .from('leaderboard')
+      .insert({ name: trimmedName, score, level });
+    if (error) console.error('submitScore insert:', error);
+  }
 }
